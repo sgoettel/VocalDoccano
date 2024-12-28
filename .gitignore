@@ -1,1 +1,14 @@
 model/vosk-model-small-en-us-0.15/
+
+*.egg-info/
+dist/
+build/
+develop-eggs/
+venv/
+.venv/
+env/
+ENV/
+pip-log.txt
+pip-delete-this.txt
+.pytest_cache/
+.venv*

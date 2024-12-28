@@ -20,7 +20,7 @@ class Config:
 
     def getint(self, section, key, fallback=None):
         return self.config.getint(section, key, fallback=fallback)
-    
+
     def getint_optional(self, section, key, fallback=None):
         try:
             return self.config.getint(section, key)
@@ -30,11 +30,8 @@ class Config:
 # --- Hilfsfunktionen ---
 def calculate_char_positions(tokens, start_token, end_token):
     start = sum(len(token) + 1 for token in tokens[:start_token])
-    end = start + sum(len(token) + 1 for token in tokens[start_token:end_token + 1]) -1
+    end = start + sum(len(token) + 1 for token in tokens[start_token:end_token + 1]) - 1
     return start, end
-
-def normalize_command(command, command_map):
-    return command_map.get(command.lower())
 
 def play_sound(wave_object):
     if wave_object:
@@ -42,38 +39,51 @@ def play_sound(wave_object):
         play_it.wait_done()
 
 class VoiceAnnotationTool:
-    def __init__(self, config_path):
+    def __init__(self):
         self.logger = logging.getLogger(__name__)
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-        self.project_dir = os.path.dirname(os.path.abspath(__file__))
-        self.config = Config(os.path.join(self.project_dir, config_path))
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.join(script_dir, '..', 'config', 'config.ini')
+        self.config = Config(config_path)
 
-        # Doccano Setup
-        self.doccano_url = self.config.get('Doccano', 'url')
-        self.username = self.config.get('Doccano', 'username')
-        self.password = self.config.get('Doccano', 'password')
-        self.project_id = self.config.getint('Doccano', 'project_id')
-        self.client = DoccanoClient(self.doccano_url)
-        self._setup_doccano()
-
-        # Einstellungen (vor Vosk, da command_map benötigt wird)
+        # Einstellungen (vor Doccano und Vosk)
         self.batch_interval = self.config.getint('BatchSettings', 'batch_interval', fallback=30)
         self.batch_size = self.config.getint('BatchSettings', 'batch_size', fallback=10)
         self.max_retries = self.config.getint('RetrySettings', 'max_retries', fallback=3)
         self.retry_delay = self.config.getint('RetrySettings', 'retry_delay', fallback=5)
         self.tokens_to_display = self.config.getint('DisplaySettings', 'tokens_to_display', fallback=150)
+
+        # Doccano Setup (Labels werden für command_map benötigt)
+        self.doccano_url = self.config.get('Doccano', 'url')
+        self.username = self.config.get('Doccano', 'username')
+        self.password = self.config.get('Doccano', 'password')
+        self.project_id = self.config.getint('Doccano', 'project_id')
+        self.client = DoccanoClient(self.doccano_url)
         self.allowed_labels = []
-        self.command_map = self._build_command_map()
+        self.command_map = {
+            "mark": "MARK",
+            "mark next": "MARK NEXT",
+            "mark back": "MARK BACK",
+            "next": "FORWARD",
+            "exit": "EXIT",
+            "undo": "UNDO",
+            "show next": "SHOW NEXT TOKENS",
+            "back": "BACKWARDS"
+        }
+        self._setup_doccano()
 
         # Vosk Setup (nach command_map)
-        self.model_path = os.path.join(self.project_dir, self.config.get('Vosk', 'model_path'))
+        self.logger.info(f"Command map vor Vosk Setup: {self.command_map}") # Zur Überprüfung
+        model_path_relative = self.config.get('Vosk', 'model_path')
+        self.model_path = os.path.join(script_dir, '..', model_path_relative)
         self.model = None
         self.recognizer = None
         self._setup_vosk()
 
         # Audio Setup
-        self.sound_path = os.path.join(self.project_dir, self.config.get('Audio', 'sound_path'))
+        sound_path_relative = self.config.get('Audio', 'sound_path')
+        self.sound_path = os.path.join(script_dir, '..', sound_path_relative)
         self.wave_obj_tag = self._load_sound()
 
         # Zustandsvariablen
@@ -83,6 +93,7 @@ class VoiceAnnotationTool:
         self.selection_start = None
         self.selection_end = None
         self.annotation_batch = []
+        self.existing_annotations = []
         self.last_batch_send_time = None
         self.last_tag_action = None
 
@@ -104,9 +115,11 @@ class VoiceAnnotationTool:
             self.allowed_labels = [label.text for label in label_types] if label_types else []
             if self.allowed_labels:
                 self.logger.info(f"Loaded available labels from Doccano project {self.project_id}: {self.allowed_labels}")
+                for label in self.allowed_labels:
+                    self.command_map[label.lower()] = label.upper()
+                self.logger.info(f"Updated command map: {self.command_map}")
             else:
                 self.logger.warning(f"No label types found in project {self.project_id}!")
-            self.command_map = self._build_command_map() # Command Map neu aufbauen, inkl. potenziell leerer Labels
         except Exception as e:
             self.logger.error(f"Error connecting to Doccano or fetching labels: {e}")
             exit(1)
@@ -117,7 +130,9 @@ class VoiceAnnotationTool:
             exit(1)
         self.model = Model(self.model_path)
         self.recognizer = KaldiRecognizer(self.model, 16000)
-        self.recognizer.SetGrammar(json.dumps(list(self.command_map.keys())))
+        grammar = json.dumps(list(self.command_map.keys()))
+        self.logger.info(f"Vosk grammar: {grammar}")
+        self.recognizer.SetGrammar(grammar)
 
     def _load_sound(self):
         try:
@@ -126,22 +141,6 @@ class VoiceAnnotationTool:
             self.logger.error(f"Sound file '{self.sound_path}' not found.")
             return None
 
-    def _build_command_map(self):
-        command_map = {
-            "mark": "mark",
-            "mark next": "mark next",
-            "mark back": "mark back",
-            "next": "forward",
-            "exit": "exit",
-            "undo": "undo",
-            "show next": "show next tokens",
-            "back": "backwards",
-            "load document": "load document"
-        }
-        for label in self.allowed_labels:
-            command_map[label.lower()] = label.upper()
-        return command_map
-
     def load_document_by_id(self, document_id):
         try:
             document = self.client.find_example_by_id(project_id=self.project_id, example_id=document_id)
@@ -149,23 +148,25 @@ class VoiceAnnotationTool:
                 self.logger.info(f"Document with ID {document_id} loaded successfully.")
                 self.document = document
                 self.text = word_tokenize(document.text)
-                existing_annotations = self.load_existing_annotations(document_id)
-                self.annotation_batch = []
-                self.annotation_batch.extend(existing_annotations)
+                self.existing_annotations = self.load_existing_annotations(document_id) # Speichern der vorhandenen Annotationen
+                self.annotation_batch = [] # Leeren des Batches für neue Annotationen
                 self.last_batch_send_time = time.time()
                 self.cursor_position = 0
                 self.selection_start = None
                 self.selection_end = None
+                preview_length = min(self.tokens_to_display, len(self.text))
+                preview_text = " ".join(self.text[:preview_length])
+                self.logger.info(f"Initial text: ...{preview_text}...")
                 return True
             else:
                 self.logger.warning(f"Document with ID {document_id} not found.")
-                self.document = None  # Explizit auf None setzen
-                self.text = None      # Explizit auf None setzen
+                self.document = None
+                self.text = None
                 return False
         except Exception as e:
             self.logger.error(f"Error loading document with ID {document_id}: {e}")
-            self.document = None  # Explizit auf None setzen
-            self.text = None      # Explizit auf None setzen
+            self.document = None
+            self.text = None
             return False
 
     def get_text_for_annotation(self):
@@ -260,65 +261,61 @@ class VoiceAnnotationTool:
             self.logger.warning("No text selected for tagging.")
 
     def handle_command(self, command):
-        if command == "mark":
+        normalized_command = self.normalize_command(command)
+        if normalized_command == "MARK":
             if self.text:
                 self.mark()
             else:
                 self.logger.warning("No document loaded. Cannot mark.")
-        elif command == "mark next":
+        elif normalized_command == "MARK NEXT":
             if self.text:
                 self.mark_next()
             else:
                 self.logger.warning("No document loaded. Cannot mark next.")
-        elif command == "mark back":
+        elif normalized_command == "MARK BACK":
             if self.text:
                 self.mark_back()
             else:
                 self.logger.warning("No document loaded. Cannot adjust mark.")
-        elif command == "backwards":
+        elif normalized_command == "BACKWARDS":
             if self.text:
                 self.cursor_position = max(self.cursor_position - 1, 0)
                 self.logger.info(f"Cursor moved back. Current token: {self.text[self.cursor_position]}")
             else:
                 self.logger.warning("No document loaded. Cannot move backwards.")
-        elif command == "forward":
+        elif normalized_command == "FORWARD":
             if self.text:
                 self.cursor_position = min(self.cursor_position + 1, len(self.text) - 1)
                 self.logger.info(f"Cursor moved forward. Current token: {self.text[self.cursor_position]}")
             else:
                 self.logger.warning("No document loaded. Cannot move forward.")
-        elif command == "show next tokens":
+        elif normalized_command == "SHOW NEXT TOKENS":
             if self.text:
                 self.show_next_tokens()
             else:
                 self.logger.warning("No document loaded. Cannot show next tokens.")
-        elif command == "exit":
+        elif normalized_command == "EXIT":
             self.logger.info("Exiting the script...")
             self.flush_annotation_batch()
             return False
-        elif command == "undo":
+        elif normalized_command == "UNDO":
             if self.last_tag_action in self.annotation_batch:
                 self.annotation_batch.remove(self.last_tag_action)
                 self.logger.info(f"Removed last tag action: '{self.last_tag_action['text']}' from batch.")
                 self.last_tag_action = None
             else:
                 self.logger.warning("No tag action available to undo.")
-        elif command.startswith("load document"):
-            try:
-                document_id = int(command.split("load document")[-1].strip())
-                self.load_document_by_id(document_id)
-            except ValueError:
-                self.logger.warning("Invalid document ID format.")
-            except IndexError:
-                self.logger.warning("Please specify the document ID.")
-        elif command.upper() in self.allowed_labels:
+        elif normalized_command in self.allowed_labels:
             if self.text:
-                self.tag_selection(command.upper())
+                self.tag_selection(command)
             else:
                 self.logger.warning("No document loaded. Cannot tag.")
         else:
             self.logger.info("No command recognized.")
         return True
+
+    def normalize_command(self, command):
+        return self.command_map.get(command.lower())
 
     def run(self):
         audio = pyaudio.PyAudio()
@@ -327,19 +324,16 @@ class VoiceAnnotationTool:
 
         self.logger.info("Speak commands (e.g., 'mark', 'next', 'person', 'location', 'load document <ID>')...")
 
-        self.document = None  # Kein Dokument initial geladen
-        self.text = None
-
         try:
             while True:
                 data = stream.read(4000)
                 if self.recognizer.AcceptWaveform(data):
                     result = json.loads(self.recognizer.Result())
                     raw_command = result.get("text", "").strip()
-                    command = normalize_command(raw_command, self.command_map)
+                    command = raw_command # Don't normalize here, do it in handle_command
 
                     if command:
-                        self.logger.info(f"Executing command: {command}")
+                        self.logger.info(f"Recognized command: {command}")
                         if not self.handle_command(command):
                             break
 
@@ -355,5 +349,5 @@ class VoiceAnnotationTool:
             audio.terminate()
 
 if __name__ == "__main__":
-    tool = VoiceAnnotationTool('config.ini')
+    tool = VoiceAnnotationTool()
     tool.run()
