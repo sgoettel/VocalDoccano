@@ -46,7 +46,7 @@ You'll find all the settings in the `config/config.ini` file.
     * `model_path`:  Tell VocalDoccano where your downloaded Vosk model is. The path should be relative to the main folder of the VocalDoccano repository. For example: `models/vosk-model-small-en-us-0.15`.
 
 * **`[Audio]`:** Settings for the sound you hear when you tag something.
-    * `sound_path`:  The location of the sound file. This is also relative to the main repository folder (e.g., `assets/tag_notification.wav`).
+    * `sound_path`:  The location of the sound file. This is also relative to the main repository folder (e.g., `assets/tag_notification.wav`). (Sound effect provided by [Universfield](https://pixabay.com/de/users/universfield-28281460/) from Pixabay.)
 
 * **`[BatchSettings]`:** These settings control how often your annotations are sent to Doccano.
 
