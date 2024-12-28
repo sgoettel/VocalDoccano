@@ -1,0 +1,5 @@
+vosk
+nltk
+pyaudio
+doccano-client
+simpleaudio

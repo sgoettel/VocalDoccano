@@ -1,0 +1,32 @@
+sound from https://pixabay.com/de/users/universfield-28281460/
+
+---
+Address the User's Misunderstanding (and my own previous mistake): The user's initial framing (and my agreeing with it too readily) suggested that the project_id alone should be sufficient to load a document. The documentation clearly shows this isn't the case. A project_id identifies the container, and an example_id (document ID) identifies the specific item within that container.
+
+Refine the Concept of "Document ID": It's not a top-level identifier. It's specific to an example within a project.
+
+Correct the Previous Suggestion: My earlier suggestion to add a document_id directly under the [Doccano] section was flawed. While technically workable, it misses the point that the example_id is specific to an example within the already identified project.
+
+Formulate the Correct Explanation: Explain that Doccano organizes data into projects, and each piece of data (document/example) has its own ID within that project. The project_id is necessary but not sufficient to load a specific document.
+
+Provide the Corrected Code Implementation:
+
+    config.ini: The document_id needs to be placed under a more appropriate section, like [Startup], as I had previously suggested for more general startup configurations, as it's not a core Doccano setting.
+
+    Code Changes: The __init__ method should retrieve both project_id and document_id and then use self.load_document_by_id() to load the specific document. The getint_optional function is still useful to handle cases where a document_id isn't provided.
+---
+Caching von Doccano-Daten:
+
+    Überprüfung: Bestimmte Daten (z.B. Projektinformationen, Label-Typen) ändern sich selten. Das Cachen dieser Daten würde unnötige API-Aufrufe reduzieren.
+
+    Praktikabilität (Nutzer & Programmierer): Verbessert die Reaktionszeit, da Daten lokal verfügbar sind. Der Programmierer muss eine Caching-Strategie implementieren (z.B. mit functools.lru_cache für einfache Fälle oder einer dedizierten Caching-Bibliothek).
+
+    Umsetzung: Identifiziere API-Aufrufe, deren Ergebnisse gecacht werden können. Implementiere Caching-Mechanismen.
+
+Asynchrone API-Aufrufe:
+
+    Überprüfung: Aktuell sind API-Aufrufe blockierend. Die Verwendung von asynchronen Operationen würde die UI reaktionsfähiger machen.
+
+    Praktikabilität (Nutzer & Programmierer): Verbessert die gefühlte Performance, da das Programm während API-Aufrufen nicht "einfriert". Erfordert eine größere Umstrukturierung des Codes mit asyncio oder threading. Erhöhter Entwicklungsaufwand, aber potenziell große Verbesserung der Nutzererfahrung.
+
+    Umsetzung: Einarbeitung in asynchrone Programmierung in Python und Anpassung der Doccano-Interaktionen.
