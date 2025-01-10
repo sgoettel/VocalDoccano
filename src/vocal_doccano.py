@@ -7,7 +7,7 @@ import sys
 
 from vosk import Model, KaldiRecognizer
 import pyaudio
-from nltk.tokenize import word_tokenize
+from nltk.tokenize import RegexpTokenizer
 from colorama import Fore, Style, init
 from doccano_client import DoccanoClient
 import simpleaudio as sa
@@ -31,7 +31,7 @@ class Config:
         """
         self.config = configparser.ConfigParser()
         self.config.read(config_path)
-
+    
     def get(self, section, key):
         """
         Retrieves a configuration value as a string.
@@ -77,21 +77,87 @@ class Config:
             return fallback
 
 # --- Helper functions ---
-def calculate_char_positions(tokens, start_token, end_token):
+def calculate_char_positions(text, tokens, start_token, end_token):
     """
-    Calculates the start and end character positions of a selected span of tokens.
+    Calculates the start and end character positions of a selected token range
+    directly in the original text.
 
     Args:
-        tokens (list): A list of tokens (words).
-        start_token (int): The index of the starting token.
-        end_token (int): The index of the ending token.
+        text (str): The original text.
+        tokens (list): A list of tokens.
+        start_token (int): The index of the start token.
+        end_token (int): The index of the end token.
 
     Returns:
         tuple: A tuple containing the start and end character positions.
     """
-    start = sum(len(token) + 1 for token in tokens[:start_token])
-    end = start + sum(len(token) + 1 for token in tokens[start_token : end_token + 1]) - 1
-    return start, end
+    if not tokens:
+        return 0, 0
+
+    start_char = -1
+    end_char = -1
+
+    # find the start position of the first token in the selected range
+    try:
+        start_token_text = tokens[start_token]
+        start_index = 0
+        for i in range(start_token):
+            start_index = text.find(tokens[i], start_index) + len(tokens[i])
+            if start_index == -1:
+                logging.error(f"Start token '{tokens[i]}' not found in the text.")
+                return -1, -1  # Fehlerbehandlung
+        start_char = text.find(start_token_text, start_index)
+        if start_char == -1:
+            logging.error(f"Start token '{start_token_text}' not found in the text.")
+            return -1, -1
+
+        # find the start position of the first token in the selected range
+        end_token_text = tokens[end_token]
+        end_index_start = 0
+        for i in range(end_token + 1):
+            found_index = text.find(tokens[i], end_index_start)
+            if found_index == -1:
+                logging.error(f"End token '{tokens[i]}' not found in the text.")
+                return -1, -1
+            end_index_start = found_index + len(tokens[i])
+        end_char = end_index_start
+
+        logging.debug(f"  Calculating position for tokens {start_token} to {end_token}:")
+        logging.debug(f"  Start-Token: '{tokens[start_token]}'")
+        logging.debug(f"  End-Token: '{tokens[end_token]}'")
+        logging.debug(f"  Start-Char: {start_char}")
+        logging.debug(f"  End-Char: {end_char}")
+
+        return start_char, end_char
+
+    except IndexError:
+        logging.error("Invalid token index.")
+        return -1, -1
+    except Exception as e:
+        logging.error(f"Error calculating character positions: {e}")
+        return -1, -1
+
+def count_whitespace(text, first_token, second_token):
+    """
+    Counts the number of whitespace characters between the first occurrence
+    of first_token and the subsequent first occurrence of second_token.
+    """
+    try:
+        start = text.find(first_token)
+        if start == -1:
+            logging.warning(f"First token not found: '{first_token}'")
+            return 0  # Or handle it in another appropriate way
+
+        start_of_second = text.find(second_token, start + len(first_token))
+        if start_of_second == -1:
+            logging.warning(f"Second token not found after '{first_token}': '{second_token}'")
+            return 0  # Or handle it in another appropriate way
+
+        whitespace = text[start + len(first_token) : start_of_second]
+        return len(whitespace)
+    except Exception as e:
+        logging.error(f"Error counting whitespace between '{first_token}' and '{second_token}': {e}")
+        return 0  # Or handle it in another appropriate way
 
 def play_sound(wave_object):
     """
@@ -117,9 +183,9 @@ class VoiceAnnotationTool:
         """
         self.logger = logging.getLogger(__name__)
         logging.basicConfig(
-            level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+            level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s" # return to .INFO later, after successfull debugging
         )
-
+        self.tokenizer = RegexpTokenizer(r'\w+|[^\w\s]+')
         script_dir = os.path.dirname(os.path.abspath(__file__))
         config_path = os.path.join(script_dir, "..", "config", "config.ini")
         self.config = Config(config_path)
@@ -253,7 +319,8 @@ class VoiceAnnotationTool:
             if document:
                 self.logger.info("Document with ID %s loaded successfully.", document_id)
                 self.document = document
-                self.text = word_tokenize(document.text)
+                self.text = self.tokenizer.tokenize(document.text)
+                self.logger.debug(f"Tokenisierter Text: {self.text}")
                 self.existing_annotations = self.load_existing_annotations(
                     document_id
                 )  # Store existing annotations
@@ -385,16 +452,14 @@ class VoiceAnnotationTool:
 
     def tag_selection(self, label):
         """
-        Tags the currently selected text with the specified label.
-
-        Args:
-            label (str): The label to apply to the selected text.
+        Tags the currently selected text with the specified label and
+        displays the current token after tagging.
         """
         if self.selection_start is not None and self.selection_end is not None:
             normalized_label = label.upper()
             if normalized_label in self.allowed_labels:
                 start_char, end_char = calculate_char_positions(
-                    self.text, self.selection_start, self.selection_end
+                    self.document.text, self.text, self.selection_start, self.selection_end
                 )
                 tagged_text = " ".join(
                     self.text[self.selection_start : self.selection_end + 1]
@@ -411,7 +476,15 @@ class VoiceAnnotationTool:
                 self.logger.info(
                     "Added tag '%s' as %s to batch.", colored_text, normalized_label
                 )
+
+                # Move the cursor to the next token
                 self.cursor_position = self.selection_end + 1
+                if self.cursor_position < len(self.text):
+                    current_token = self.text[self.cursor_position]
+                    self.logger.info("Current token: %s", current_token)
+                elif self.text:
+                    self.logger.info("End of document reached.")
+
                 self.selection_start = None
                 self.selection_end = None
                 play_sound(self.wave_obj_tag)
@@ -437,6 +510,7 @@ class VoiceAnnotationTool:
         normalized_command = self.normalize_command(command)
         if normalized_command == "MARK":
             if self.text:
+                self.logger.debug(f"Cursor position before mark: {self.cursor_position}")
                 self.mark()
             else:
                 self.logger.warning("No document loaded. Cannot mark.")
@@ -527,7 +601,7 @@ class VoiceAnnotationTool:
                 if self.recognizer.AcceptWaveform(data):
                     result = json.loads(self.recognizer.Result())
                     raw_command = result.get("text", "").strip()
-                    command = raw_command  # Don't normalize here, do it in handle_command
+                    command = raw_command  # no normalize here
 
                     if command:
                         self.logger.info("Recognized command: %s", command)
