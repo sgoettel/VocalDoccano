@@ -6,13 +6,6 @@ By using voice commands, users can potentially annotate text with less physical 
 
 ## Requirements
 
-* **Python 3.7+**
-* **pip (you'll need this to install the other stuff)**
-* **Python Dependencies:**  Make sure you've got these installed. The easiest way is to run:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
 * **Running Doccano Instance:** You need a Doccano instance up and running and accessible via its API.  It doesn't matter how you installed Doccano (Docker, pip), as long as VocalDoccano can connect. I used [Docker Compose installation](https://doccano.github.io/doccano/install_and_upgrade_doccano/#install-with-docker-compose). You'll need your Doccano URL, username, and password.
 * **Vosk Speech Recognition Model:**  You'll need a speech recognition model from Vosk. Small models are usually fine and you can grab them from [https://alphacephei.com/vosk/models](https://alphacephei.com/vosk/models). The `vosk-model-small-en-us-0.15` model (which is mentioned in the config file) is a good starting point for English.
 
@@ -65,7 +58,7 @@ You'll find all the settings in the `config/config.ini` file.
    ```bash
    python vocal_doccano.py
    ```
-   (Running it with `python src/vocal_doccano.py` from the main directory also works)
+   (`python src/vocal_doccano.py` from the main directory also works)
 
    The script will try to connect to Doccano and load your document. Keep an eye on the terminal for messages.
 
